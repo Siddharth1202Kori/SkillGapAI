@@ -25,3 +25,7 @@ tenacity>=8.3.0
 loguru>=0.7.2
 tqdm>=4.66.4
 feedparser>=6.0.10
+
+# Deployment
+Flask>=3.0.0
+gunicorn>=21.2.0
