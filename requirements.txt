@@ -29,3 +29,4 @@ feedparser>=6.0.10
 # Deployment
 Flask>=3.0.0
 gunicorn>=21.2.0
+pysqlite3-binary

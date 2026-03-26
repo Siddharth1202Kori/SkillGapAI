@@ -10,7 +10,12 @@ a hosted Chroma instance or Chroma Cloud.
 
 from __future__ import annotations
 import os
+import sys
 from typing import Optional
+
+# [DEPLOYMENT PATCH] Render's base Linux OS has sqlite3 < 3.35. This overrides it!
+__import__('pysqlite3')
+sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
 
 import chromadb
 from chromadb import PersistentClient
