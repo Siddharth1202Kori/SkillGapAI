@@ -20,7 +20,7 @@ chromadb==0.5.5
 langchain-chroma==0.1.1
 # Utilities
 python-dotenv>=1.0.1
-pydantic==2.8.2
+pydantic>=2.10.3,<3.0.0
 tenacity>=8.3.0
 loguru>=0.7.2
 tqdm>=4.66.4
