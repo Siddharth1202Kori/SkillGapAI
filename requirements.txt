@@ -8,19 +8,19 @@ fake-useragent>=1.5.1
 supabase>=2.5.0
 
 # LangChain Ingestion
-langchain>=0.2.16
-langchain-community>=0.2.16
-langchain-core>=0.2.38
+langchain==0.2.16
+langchain-community==0.2.16
+langchain-core==0.2.38
 
 # Embeddings (Mistral)
-mistralai>=1.0.3
+mistralai==1.12.4
 
 # Vector DB
-chromadb>=0.5.5
-langchain-chroma>=0.1.1
+chromadb==0.5.5
+langchain-chroma==0.1.1
 # Utilities
 python-dotenv>=1.0.1
-pydantic>=2.8.2
+pydantic==2.8.2
 tenacity>=8.3.0
 loguru>=0.7.2
 tqdm>=4.66.4
