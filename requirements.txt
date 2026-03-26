@@ -17,7 +17,7 @@ mistralai>=1.0.3
 
 # Vector DB
 chromadb>=0.5.5
-
+langchain-chroma>=0.1.1
 # Utilities
 python-dotenv>=1.0.1
 pydantic>=2.8.2
