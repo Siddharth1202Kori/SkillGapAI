@@ -1,0 +1,28 @@
+# Virtual Environment
+venv/
+env/
+.env
+
+# ChromaDB artifacts
+chroma_db/
+chroma_sqlite.db
+chroma.sqlite3
+
+# Cached & Runtime files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Analysis outputs
+output_analysis.json
+jobs_*.json
+sample_jobs.json
+
+# IDE
+.vscode/
+.idea/
+.DS_Store
+
+# Mac OS
+.DS_Store

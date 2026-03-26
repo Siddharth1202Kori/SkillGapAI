@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SkillGap AI - Bridge Your Skill Gap</title>
+    <meta name="description" content="SkillGap AI is an intelligent career assistant powered by RAG to analyze real-time job market data and build personalized skill gap plans.">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+    <!-- Feather icons -->
+    <script src="https://unpkg.com/feather-icons"></script>
+</head>
+<body class="light-mode">
+    <div class="blob-bg"></div>
+    <div class="blob-bg blob-2"></div>
+
+    <header class="navbar">
+        <div class="logo">
+            <span class="logo-icon"><i data-feather="cpu"></i></span>
+            <span class="logo-text">SkillGap AI</span>
+        </div>
+        <div class="nav-actions">
+            <!-- <button class="btn btn-ghost" id="historyBtn"><i data-feather="clock"></i> History</button> -->
+            <button class="icon-btn" id="themeToggle"><i data-feather="moon"></i></button>
+        </div>
+    </header>
+
+    <main class="container">
+        <!-- Landing Hero -->
+        <section class="hero" id="heroSection">
+            <div class="hero-content">
+                <div class="badge">✨ Real-time Job Market Intelligence</div>
+                <h1>Bridge Your Skill Gap with AI</h1>
+                <p>Data-driven career guidance powered by live job market insights. Find out exactly what you're missing to land your next dream role.</p>
+                <button class="btn btn-primary btn-large" id="startBtn">Start Analysis <i data-feather="arrow-right"></i></button>
+            </div>
+            
+            <div class="hero-preview-cards">
+                <div class="floating-card c-1">
+                    <div class="f-icon"><i data-feather="bar-chart-2"></i></div>
+                    <div class="f-text">
+                        <span>Missing Skill Detected</span>
+                        <strong>Docker & CI/CD</strong>
+                    </div>
+                </div>
+                <div class="floating-card c-2">
+                    <div class="f-icon green"><i data-feather="book-open"></i></div>
+                    <div class="f-text">
+                        <span>Learning Roadmap</span>
+                        <strong>React Mastery</strong>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Input Section -->
+        <section class="input-panel hidden" id="inputSection">
+            <div class="panel-header">
+                <h2>Configure Your Analysis</h2>
+                <p>Tell us what role you're aiming for and your current experience.</p>
+            </div>
+            
+            <form id="analysisForm" class="panel-form">
+                <div class="form-group">
+                    <label for="jobRole">Target Job Role <span class="required">*</span></label>
+                    <div class="input-wrapper">
+                        <i data-feather="search" class="input-icon"></i>
+                        <input type="text" id="jobRole" placeholder="e.g. Senior Machine Learning Engineer" required>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="background">Your Current Skills & Background</label>
+                    <textarea id="background" placeholder="e.g. I know Python, basic SQL, and have built a few Flask apps. I have 1 year of experience." rows="4"></textarea>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group half">
+                        <label for="experience">Experience Level</label>
+                        <select id="experience">
+                            <option value="entry">Entry Level (0-2 Yrs)</option>
+                            <option value="mid">Mid Level (2-5 Yrs)</option>
+                            <option value="senior">Senior Level (5+ Yrs)</option>
+                        </select>
+                    </div>
+                    <div class="form-group half">
+                        <label for="domain">Domain Focus</label>
+                        <select id="domain">
+                            <option value="all">Software & IT</option>
+                            <option value="ai">AI & Machine Learning</option>
+                            <option value="data">Data Science</option>
+                            <option value="frontend">Frontend & Design</option>
+                            <option value="backend">Backend & Cloud</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="form-actions">
+                    <button type="submit" class="btn btn-primary w-full" id="analyzeBtn">
+                        <span class="btn-text">Analyze Skill Gap</span>
+                        <i data-feather="zap"></i>
+                    </button>
+                </div>
+            </form>
+        </section>
+
+        <!-- Loading State -->
+        <section class="loading-state hidden" id="loadingSection">
+            <div class="loader-ring"></div>
+            <h3 class="loader-title">Analyzing Market Data...</h3>
+            <p class="loader-subtitle" id="loaderText">Fetching real job listings from Remotive...</p>
+        </section>
+
+        <!-- Results Dashboard -->
+        <section class="dashboard hidden" id="dashboardSection">
+            <div class="dashboard-header">
+                <div>
+                    <h2 id="dashRoleTitle">Skill Gap Analysis & Recommendations</h2>
+                    <p id="dashQuery">Query: ...</p>
+                </div>
+                <div class="dash-actions">
+                    <button class="btn btn-ghost btn-sm" id="downloadBtn" onclick="window.print()"><i data-feather="download"></i> Save PDF</button>
+                    <button class="btn btn-outline btn-sm" id="refineBtn"><i data-feather="refresh-cw"></i> Run New Query</button>
+                </div>
+            </div>
+
+            <!-- Relevant Jobs -->
+            <div class="dash-card">
+                <div class="card-header">
+                    <div class="h-icon orange"><i data-feather="briefcase"></i></div>
+                    <h3><span id="jobsCount">0</span> Top Matched Jobs</h3>
+                </div>
+                <div id="jobsList" class="jobs-list">
+                    <!-- Populated via JS -->
+                </div>
+            </div>
+
+            <!-- Real In-Demand Skills Detected -->
+            <div class="dash-card mt-4">
+                <div class="card-header">
+                    <div class="h-icon blue"><i data-feather="trending-up"></i></div>
+                    <h3>In-Demand Skills Detected</h3>
+                </div>
+                <div id="demandSkillsGrid" class="skills-grid">
+                    <!-- Populated via JS -->
+                </div>
+            </div>
+
+            <!-- The Full Rendered LLM Markdown Analysis -->
+            <div class="dash-card mt-4 mb-8">
+                <div class="card-header">
+                    <div class="h-icon purple"><i data-feather="cpu"></i></div>
+                    <h3>Mistral AI Career Analysis</h3>
+                </div>
+                <div id="markdownContent" class="markdown-body">
+                    <!-- Marked JS processes the markdown and places it here -->
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Markdown Parser -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
