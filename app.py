@@ -33,13 +33,14 @@ def analyze():
         # Run process (this may take 30-60 secs depending on scraping + mistral)
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
         
-        # main.py saves the final result to output_analysis.json
-        if os.path.exists('output_analysis.json'):
-            with open('output_analysis.json', 'r') as f:
+        # main.py saves the final result to the versioned outputs folder
+        out_path = os.path.join('rag_outputs', 'base_version', 'output_analysis.json')
+        if os.path.exists(out_path):
+            with open(out_path, 'r') as f:
                 analysis_data = json.load(f)
             return jsonify(analysis_data)
         else:
-            return jsonify({"error": "Pipeline finished but failed to generate output_analysis.json"}), 500
+            return jsonify({"error": "Pipeline finished but failed to generate output in rag_outputs/base_version/output_analysis.json"}), 500
             
     except subprocess.CalledProcessError as e:
         print("PIPELINE ERROR:")

@@ -157,8 +157,11 @@ def step_query(args, vector_store: ChromaVectorStore):
     print(result.raw_analysis)
     print("─" * 70 + "\n")
 
-    # Save output
-    out_path = Path("output_analysis.json")
+    # Save output into versioned folder
+    out_dir = Path("rag_outputs/base_version")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / "output_analysis.json"
+    
     with open(out_path, "w") as f:
         json.dump({
             "query":           result.query,
