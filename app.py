@@ -1,54 +1,116 @@
 import sys
-import subprocess
 import json
 import os
 import uuid
 import threading
+from datetime import datetime, timezone
+from dataclasses import asdict
 
 from flask import Flask, request, jsonify, send_from_directory
+from loguru import logger
+from dotenv import load_dotenv
+
+load_dotenv()
 
 app = Flask(__name__, static_folder='frontend')
 
-# ── In-memory job store ─────────────────────────────────────────────────────
-# Stores job_id -> { status, result, error }
-# Reset on every Render restart (acceptable since jobs are short-lived)
+# ── In-memory job store ──────────────────────────────────────────────────────
 _jobs: dict = {}
 _jobs_lock = threading.Lock()
+
+# ── Warm-start: Load heavy components ONCE when Flask starts ─────────────────
+# This prevents re-loading the CrossEncoder and re-importing all packages
+# on every single request (which caused the 300s timeout).
+logger.info("Initializing pipeline components (warm-start)...")
+try:
+    from vectordb.chroma_store import ChromaVectorStore
+    from rag_engine.engine import RAGEngine
+    from ingestion.pipeline import IngestionPipeline
+    from scraper.registry import ScraperRegistry, check_freshness
+    from utils.cloud_storage import CloudStorage
+
+    _vector_store = ChromaVectorStore()
+    # RAGEngine.__init__ downloads/loads the CrossEncoder here — once only!
+    _rag_engine = RAGEngine(vector_store=_vector_store)
+    logger.success("Pipeline warm-start complete. CrossEncoder loaded and cached.")
+except Exception as e:
+    logger.error(f"Warm-start failed: {e}. Pipeline will be unavailable.")
+    _vector_store = None
+    _rag_engine = None
 
 
 def _run_pipeline(job_id: str, query: str, background: str):
     """
-    Background thread that runs the full Skill Gap pipeline.
-    Stores the result in `_jobs` when done.
+    Background thread: runs the full Skill Gap pipeline using already-loaded
+    components (no subprocess, no re-imports, no CrossEncoder re-download).
     """
     try:
-        cmd = [sys.executable, "-u", "main.py", "--query", query, "--reset-db"]
-        if background.strip():
-            cmd.extend(["--user-background", background.strip()])
+        if _rag_engine is None or _vector_store is None:
+            raise RuntimeError("Pipeline components failed to initialize at startup.")
 
-        print(f"[Job {job_id[:8]}] Running: {' '.join(cmd)}")
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-
-        if result.returncode != 0:
-            raise RuntimeError(result.stderr[-2000:])  # Last 2000 chars of stderr
-
-        out_path = os.path.join('rag_outputs', 'base_version', 'output_analysis.json')
-        if os.path.exists(out_path):
-            with open(out_path, 'r') as f:
-                data = json.load(f)
+        # 1. Freshness check — skip full scrape if data is fresh
+        cached = check_freshness(query)
+        if cached:
+            logger.info(f"[Job {job_id[:8]}] Cache HIT — serving from Supabase.")
             with _jobs_lock:
-                _jobs[job_id] = {"status": "done", "result": data}
-            print(f"[Job {job_id[:8]}] ✓ Complete")
-        else:
-            raise FileNotFoundError("Pipeline finished but output file not found.")
+                _jobs[job_id] = {"status": "done", "result": cached}
+            return
+
+        # 2. Scrape jobs from all 5 sources
+        logger.info(f"[Job {job_id[:8]}] Cache MISS — scraping...")
+        registry = ScraperRegistry()
+        all_jobs = registry.run_all(query=query)
+        jobs_dicts = [asdict(j) for j in all_jobs]
+
+        if not jobs_dicts:
+            raise RuntimeError("No jobs found across all scrapers for this query.")
+
+        # 3. Upload raw jobs to Supabase Storage
+        try:
+            storage = CloudStorage()
+            date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            safe_query = query.replace(" ", "_")[:40]
+            storage.upload_jobs(jobs_dicts, f"jobs/{date_str}_{safe_query}.json")
+        except Exception as e:
+            logger.warning(f"[Job {job_id[:8]}] Supabase upload skipped: {e}")
+
+        # 4. Ingest + embed — reset Collection for a fresh query
+        _vector_store.reset_collection()
+        pipeline = IngestionPipeline(chunk_size=1000, chunk_overlap=150)
+        chunks = pipeline.run(jobs_dicts)
+        _vector_store.add_documents(chunks)
+
+        # 5. RAG analyze — uses cached CrossEncoder, no re-download
+        result = _rag_engine.analyze(query=query, user_background=background or None)
+
+        # 6. Build output payload
+        output_data = {
+            "id":               str(uuid.uuid4()),
+            "created_at":       datetime.now(timezone.utc).isoformat(),
+            "query":            result.query,
+            "matched_jobs":     result.matched_jobs,
+            "in_demand_skills": result.in_demand_skills,
+            "analysis":         result.raw_analysis,
+        }
+
+        # 7. Persist to Supabase Postgres for evaluator
+        try:
+            storage = CloudStorage()
+            storage.insert_rag_output(output_data)
+        except Exception as e:
+            logger.warning(f"[Job {job_id[:8]}] Supabase insert skipped: {e}")
+
+        with _jobs_lock:
+            _jobs[job_id] = {"status": "done", "result": output_data}
+        logger.success(f"[Job {job_id[:8]}] ✓ Pipeline complete.")
 
     except Exception as e:
-        print(f"[Job {job_id[:8]}] ✗ Failed: {e}")
+        logger.error(f"[Job {job_id[:8]}] ✗ Failed: {e}")
         with _jobs_lock:
             _jobs[job_id] = {"status": "error", "error": str(e)}
 
 
-# ── Routes ──────────────────────────────────────────────────────────────────
+# ── Routes ───────────────────────────────────────────────────────────────────
 
 @app.route('/')
 def index():
@@ -61,22 +123,17 @@ def serve_static(path):
 
 @app.route('/api/analyze', methods=['POST'])
 def analyze():
-    """
-    Non-blocking endpoint — launches the pipeline in a background thread
-    and immediately returns a job_id. Frontend polls /api/status/<job_id>.
-    """
     data = request.json
     if not data or 'query' not in data:
         return jsonify({"error": "Missing query field"}), 400
 
-    query = data['query']
+    query    = data['query']
     background = data.get('background', '')
-    job_id = str(uuid.uuid4())
+    job_id   = str(uuid.uuid4())
 
     with _jobs_lock:
         _jobs[job_id] = {"status": "running"}
 
-    # Fire the heavy pipeline in a daemon thread — won't block gunicorn
     t = threading.Thread(
         target=_run_pipeline,
         args=(job_id, query, background),
@@ -89,18 +146,13 @@ def analyze():
 
 @app.route('/api/status/<job_id>', methods=['GET'])
 def job_status(job_id: str):
-    """
-    Polling endpoint: frontend calls this every 3s until status == 'done' or 'error'.
-    """
     with _jobs_lock:
         job = _jobs.get(job_id)
-
     if not job:
         return jsonify({"error": "Unknown job_id"}), 404
-
     return jsonify(job)
 
 
 if __name__ == '__main__':
     print("🚀 Starting SkillGap AI Server on http://127.0.0.1:8000")
-    app.run(port=8000, debug=True)
+    app.run(port=8000, debug=False)  # debug=False prevents double warm-start
