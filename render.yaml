@@ -36,3 +36,8 @@ services:
         value: /opt/render/project/src/.hf_cache
       - key: CHROMA_PERSIST_DIR
         value: /var/data/chroma_db
+      # Limit PyTorch CPU threads to prevent Memory/OOM crashes on small instances
+      - key: OMP_NUM_THREADS
+        value: "1"
+      - key: MKL_NUM_THREADS
+        value: "1"
