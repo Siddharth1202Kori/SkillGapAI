@@ -24,37 +24,42 @@ _rag_engine    = None
 _pipeline_ready = False   # True once warm-start completes
 
 
+_init_lock = threading.Lock()
+
 def _initialize_components():
     """
-    Loads heavy ML components (CrossEncoder, ChromaDB, etc.) in a background
-    thread so gunicorn can bind to the port immediately at startup.
-    Render's port-scanner will see the open port before this finishes.
+    Loads heavy ML components (CrossEncoder, ChromaDB, etc.).
+    Called lazily on the first request to avoid Gunicorn fork() worker issues.
     """
     global _vector_store, _rag_engine, _pipeline_ready
-    logger.info("Background warm-start: loading ML components...")
-    try:
-        from vectordb.chroma_store import ChromaVectorStore
-        from rag_engine.engine import RAGEngine
+    
+    with _init_lock:
+        if _pipeline_ready:
+            return  # Avoid double initialization if concurrent requests arrive
+            
+        logger.info("Lazy-loading ML components...")
+        try:
+            from vectordb.chroma_store import ChromaVectorStore
+            from rag_engine.engine import RAGEngine
 
-        _vector_store = ChromaVectorStore()
-        # This is the slow step — downloads/loads the CrossEncoder once
-        _rag_engine   = RAGEngine(vector_store=_vector_store)
-        _pipeline_ready = True
-        logger.success("Background warm-start complete. Pipeline is ready.")
-    except Exception as e:
-        logger.error(f"Warm-start failed: {e}")
-
-
-# Kick off background loading immediately (non-blocking for gunicorn)
-_warmup_thread = threading.Thread(target=_initialize_components, daemon=True)
-_warmup_thread.start()
+            _vector_store = ChromaVectorStore()
+            # This is the slow step — downloads/loads the CrossEncoder once
+            _rag_engine   = RAGEngine(vector_store=_vector_store)
+            _pipeline_ready = True
+            logger.success("ML components successfully loaded.")
+        except Exception as e:
+            logger.error(f"Initialization failed: {e}")
 
 
 def _run_pipeline(job_id: str, query: str, background: str):
     """Runs the full Skill Gap pipeline in a background thread."""
     try:
+        if not _pipeline_ready:
+            logger.info(f"[Job {job_id[:8]}] First run detected. Initializing pipeline...")
+            _initialize_components()
+            
         if not _pipeline_ready or _rag_engine is None or _vector_store is None:
-            raise RuntimeError("Pipeline still warming up. Please try again in 60 seconds.")
+            raise RuntimeError("Pipeline failed to initialize.")
 
         from scraper.registry import ScraperRegistry, check_freshness
         from ingestion.pipeline import IngestionPipeline
@@ -142,10 +147,6 @@ def health():
 
 @app.route('/api/analyze', methods=['POST'])
 def analyze():
-    if not _pipeline_ready:
-        return jsonify({
-            "error": "Server is still warming up. Please wait ~60 seconds and try again."
-        }), 503
 
     data = request.json
     if not data or 'query' not in data:
