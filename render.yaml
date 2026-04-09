@@ -10,8 +10,9 @@ services:
       pip install -r requirements.txt &&
       python download_models.py
 
-    # Gunicorn with 1 worker (free tier RAM limit) and 120s timeout for long pipeline runs
-    startCommand: gunicorn app:app --workers 1 --timeout 120 --bind 0.0.0.0:$PORT
+    # gthread workers handle long-running requests without timing out
+    # --timeout 300 gives 5 minutes for scraping + embedding + LLM generation
+    startCommand: gunicorn app:app --worker-class gthread --workers 1 --threads 4 --timeout 300 --bind 0.0.0.0:$PORT
 
     # Persistent disk so ChromaDB and rag_outputs survive restarts
     disk:

@@ -81,25 +81,25 @@ document.addEventListener('DOMContentLoaded', () => {
         }, 8000); // Step every 8s while waiting for ML process
 
         try {
-            // Call the actual Flask API wrapped around main.py
+            // Step 1: Submit job and get job_id immediately (non-blocking)
             const res = await fetch('/api/analyze', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ query: role, background: bg })
             });
 
-            clearInterval(loaderInterval);
-
             if (!res.ok) {
                 const err = await res.json();
-                alert('Pipeline Error: ' + (err.error || 'Unknown error'));
-                loadingSection.classList.add('hidden');
-                inputSection.classList.remove('hidden');
-                return;
+                throw new Error(err.error || 'Failed to start pipeline job.');
             }
 
-            const RAGData = await res.json();
+            const { job_id } = await res.json();
+
+            // Step 2: Poll /api/status/<job_id> every 3 seconds until done
+            const RAGData = await pollForResult(job_id, loaderText, stages, loaderInterval);
+            clearInterval(loaderInterval);
             showDashboard(role, RAGData);
+
         } catch (error) {
             clearInterval(loaderInterval);
             alert('Failed to connect to API Backend: ' + error.message);
@@ -107,6 +107,30 @@ document.addEventListener('DOMContentLoaded', () => {
             inputSection.classList.remove('hidden');
         }
     });
+
+    // ─── Polling Helper ──────────────────────────────────────────────────────
+
+    async function pollForResult(jobId, loaderText, stages, loaderInterval) {
+        const maxAttempts = 100;  // 100 * 3s = 5 minutes max
+        for (let i = 0; i < maxAttempts; i++) {
+            await new Promise(r => setTimeout(r, 3000)); // Wait 3s between polls
+
+            const poll = await fetch(`/api/status/${jobId}`);
+            if (!poll.ok) throw new Error('Polling failed: server error.');
+
+            const job = await poll.json();
+
+            if (job.status === 'done') return job.result;
+            if (job.status === 'error') throw new Error(job.error || 'Pipeline failed.');
+
+            // Update loading message while we wait
+            if (loaderText && stages) {
+                const stageIdx = Math.min(Math.floor(i / 3), stages.length - 1);
+                loaderText.innerText = stages[stageIdx];
+            }
+        }
+        throw new Error('Analysis timed out after 5 minutes. Please try again.');
+    }
 
     // ─── Render Results ──────────────────────────────────────────────────────
     
