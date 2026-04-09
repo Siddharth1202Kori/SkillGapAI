@@ -21,8 +21,6 @@ from dotenv import load_dotenv
 
 import numpy as np
 from rank_bm25 import BM25Okapi
-from sentence_transformers import CrossEncoder
-
 from vectordb.chroma_store import ChromaVectorStore
 
 load_dotenv()
@@ -74,9 +72,9 @@ Be specific, concise, and actionable. Format your response clearly with sections
         self.model = model
         self.k = k
         
-        # Load lightning-fast generic reranker pipeline from Sentence Transformers
-        self.reranker = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2", max_length=512)
-        logger.info(f"RAGEngine ready (model={model}, k={k}, Hybrid Search + CrossEncoder Active)")
+        # [MEMORY PROTECTION] Bypassed CrossEncoder to avoid 300MB+ PyTorch memory overhead on free tiers.
+        self.reranker = None 
+        logger.info(f"RAGEngine ready (model={model}, k={k}, Hybrid Search Active - Reranking Bypassed)")
 
     # ── Retrieval ──────────────────────────────────────────────────────────────
 
@@ -124,18 +122,17 @@ Be specific, concise, and actionable. Format your response clearly with sections
         # Siphon the fused highest-confidence candidate pool (max 20 candidates per best practice)
         fused_pool = [doc_map[d_id] for d_id, _ in sorted(scores.items(), key=lambda x: x[1], reverse=True)[:20]]
         
-        # 4. CROSS-ENCODER RERANKING
-        logger.info(f"Reranking top {len(fused_pool)} candidates using MS-MARCO CrossEncoder...")
-        cross_inp = [[query, doc.page_content] for doc in fused_pool]
-        rerank_scores = self.reranker.predict(cross_inp)
+        # 4. CROSS-ENCODER RERANKING (DISABLED FOR OOM PREVENTION)
+        # We bypass the heavy PyTorch ML reranking because 512MB RAM cannot hold it.
+        # We rely solely on the powerful Hybrid RRF pool instead.
+        logger.info(f"Returning top candidates from Hybrid Search pool...")
         
-        # Combine documents with rerank scoring mathematically
-        results = list(zip(fused_pool, rerank_scores))
-        results.sort(key=lambda x: x[1], reverse=True)
+        # Sort fused pool by RRF score natively
+        results = [(doc_map[d_id], scores[d_id]) for d_id, _ in sorted(scores.items(), key=lambda x: x[1], reverse=True)]
         
         # Extract ultimate 'Top K' payload for Generation framework
         final_top = results[:self.k]
-        logger.success(f"Retrieved and natively reranked top {len(final_top)} context chunks.")
+        logger.success(f"Retrieved top {len(final_top)} context chunks (Reranker bypassed).")
         
         return [(doc, float(s)) for doc, s in final_top]
 
