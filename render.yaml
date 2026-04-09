@@ -17,7 +17,7 @@ services:
     # Persistent disk so ChromaDB and rag_outputs survive restarts
     disk:
       name: skillgap-data
-      mountPath: /opt/render/project/src
+      mountPath: /var/data
       sizeGB: 1
 
     envVars:
@@ -31,8 +31,8 @@ services:
         sync: false
       - key: ADZUNA_APP_KEY
         sync: false
-      # Tells HuggingFace where to cache models (inside the persistent disk)
+      # Tells HuggingFace where to cache models (baked into the container image, outside the empty disk)
       - key: HF_HOME
         value: /opt/render/project/src/.hf_cache
       - key: CHROMA_PERSIST_DIR
-        value: /opt/render/project/src/chroma_db
+        value: /var/data/chroma_db
