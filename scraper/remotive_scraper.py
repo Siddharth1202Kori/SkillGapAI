@@ -27,82 +27,10 @@ from bs4 import BeautifulSoup
 from loguru import logger
 
 
-# ─── Data Model ────────────────────────────────────────────────────────────────
+import requests
+from loguru import logger
 
-@dataclass
-class JobListing:
-    """Unified job listing model — same fields as IndeedScraper for compatibility."""
-    job_id: str
-    title: str
-    company: str
-    location: str
-    description: str
-    skills: list[str]
-    salary: Optional[str]
-    job_url: str
-    scraped_at: str
-    source: str = "remotive"
-
-
-# ─── Skill Extraction ─────────────────────────────────────────────────────────
-
-SKILL_KEYWORDS = [
-    "python", "java", "javascript", "typescript", "react", "node.js", "nodejs",
-    "sql", "nosql", "mongodb", "postgresql", "mysql", "redis",
-    "aws", "gcp", "azure", "docker", "kubernetes", "terraform",
-    "machine learning", "deep learning", "pytorch", "tensorflow", "scikit-learn",
-    "langchain", "openai", "hugging face", "huggingface",
-    "fastapi", "django", "flask", "spring", "express.js",
-    "ci/cd", "jenkins", "github actions",
-    "rest api", "graphql", "microservices", "kafka",
-    "pandas", "numpy", "spark", "hadoop", "airflow",
-    "linux", "bash", "shell scripting",
-    "golang", "rust", "c++", "ruby", "php", "swift", "kotlin",
-    "next.js", "vue", "angular", "svelte",
-    "figma", "tailwind",
-]
-
-# Short keywords that need word-boundary matching to avoid false positives
-# e.g., "go" matching "go to the website", "r" matching "your", "git" matching "legitimate"
-_WORD_BOUNDARY_KEYWORDS = ["go", "r", "css", "rag", "llm", "git"]
-
-
-def _extract_skills(text: str, tags: list[str]) -> list[str]:
-    """
-    Extract skills from description text + API tags.
-    Tags from Remotive already contain skill-like data, so we merge both.
-    """
-    text_lower = text.lower()
-    found = set()
-
-    # Standard substring matching for multi-word / long keywords
-    for skill in SKILL_KEYWORDS:
-        if skill in text_lower:
-            found.add(skill)
-
-    # Word-boundary matching for short/ambiguous keywords
-    for skill in _WORD_BOUNDARY_KEYWORDS:
-        pattern = r'\b' + re.escape(skill) + r'\b'
-        if re.search(pattern, text_lower):
-            found.add(skill)
-
-    # Also include relevant tags (these are curated by Remotive, so trust them more)
-    all_known = set(s.lower() for s in SKILL_KEYWORDS + _WORD_BOUNDARY_KEYWORDS)
-    for tag in tags:
-        tag_lower = tag.lower().strip()
-        if tag_lower in all_known:
-            found.add(tag_lower)
-        # Also match compound tags like "AI/ML"
-        if tag_lower in ("ai/ml", "ai", "ml"):
-            found.add("machine learning")
-
-    return sorted(found)
-
-
-def _html_to_text(html: str) -> str:
-    """Convert HTML description to plain text."""
-    soup = BeautifulSoup(html, "lxml")
-    return soup.get_text(separator="\n", strip=True)
+from .base import BaseScraper, JobListing, _html_to_text, _extract_skills
 
 
 # ─── Category Mapping ─────────────────────────────────────────────────────────
@@ -128,7 +56,7 @@ CATEGORY_MAP = {
 
 # ─── Scraper ───────────────────────────────────────────────────────────────────
 
-class RemotiveScraper:
+class RemotiveScraper(BaseScraper):
     """
     Fetches jobs from the Remotive API.
 

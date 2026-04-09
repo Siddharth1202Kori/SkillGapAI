@@ -73,6 +73,41 @@ class CloudStorage:
         logger.success(f"Uploaded {len(listings)} jobs → {uri}")
         return uri
 
+    def insert_rag_output(self, output_data: dict) -> dict:
+        """
+        Insert the final RAG output (query, context, generated answer) into a Supabase Postgres table.
+
+        Args:
+            output_data: dict containing the evaluation payload.
+
+        Returns:
+            The inserted data dictionary.
+        """
+        response = self.client.table("rag_outputs").insert(output_data).execute()
+        logger.success(f"Inserted RAG output into postgres table 'rag_outputs'")
+        return response.data
+
+    def get_unevaluated_outputs(self, limit: int = 10) -> list[dict]:
+        """Fetch latest outputs that might need evaluation."""
+        response = self.client.table("rag_outputs").select("*").order("created_at", desc=True).limit(limit).execute()
+        return response.data
+
+    def insert_evaluation(self, eval_data: dict) -> dict:
+        """
+        Insert the evaluation scores into the 'rag_evaluations' table.
+        """
+        response = self.client.table("rag_evaluations").insert(eval_data).execute()
+        logger.success(f"Inserted evaluation into postgres table 'rag_evaluations'")
+        return response.data
+
+    def insert_retrieval_evaluation(self, eval_data: dict) -> dict:
+        """
+        Insert information retrieval metrics into 'retrieval_evaluations' table.
+        """
+        response = self.client.table("retrieval_evaluations").insert(eval_data).execute()
+        logger.success(f"Inserted retrieval evaluation into postgres table 'retrieval_evaluations'")
+        return response.data
+
     # ── Download ───────────────────────────────────────────────────────────────
 
     def download_jobs(self, key: str) -> list[dict]:

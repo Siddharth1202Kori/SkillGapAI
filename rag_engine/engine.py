@@ -19,6 +19,10 @@ from langchain_core.documents import Document
 from loguru import logger
 from dotenv import load_dotenv
 
+import numpy as np
+from rank_bm25 import BM25Okapi
+from sentence_transformers import CrossEncoder
+
 from vectordb.chroma_store import ChromaVectorStore
 
 load_dotenv()
@@ -40,15 +44,11 @@ class SkillGapResult:
 
 class RAGEngine:
     """
-    Retrieval-Augmented Generation engine for job skill analysis.
-
-    Args:
-        vector_store: ChromaVectorStore instance
-        model:        Mistral model for generation (default: mistral-small-latest)
-        k:            Number of chunks to retrieve per query
+    Retrieval-Augmented Generation engine featuring Hybrid Search (Dense+BM25) 
+    and Cross-Encoder reranking.
     """
 
-    GENERATION_MODEL = "mistral-small-latest"  # swap for mistral-large-latest for better quality
+    GENERATION_MODEL = "mistral-small-latest"
 
     SYSTEM_PROMPT = """You are a career advisor and technical skills analyst.
 You are given job listings retrieved from Indeed, and a user's background/query.
@@ -73,13 +73,71 @@ Be specific, concise, and actionable. Format your response clearly with sections
         self.store = vector_store
         self.model = model
         self.k = k
-        logger.info(f"RAGEngine ready (model={model}, k={k})")
+        
+        # Load lightning-fast generic reranker pipeline from Sentence Transformers
+        self.reranker = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2", max_length=512)
+        logger.info(f"RAGEngine ready (model={model}, k={k}, Hybrid Search + CrossEncoder Active)")
 
     # ── Retrieval ──────────────────────────────────────────────────────────────
 
     def retrieve(self, query: str) -> list[tuple[Document, float]]:
-        """Retrieve top-k relevant job chunks with similarity scores."""
-        return self.store.similarity_search_with_score(query, k=self.k)
+        """Retrieve using Hybrid Search (BM25 + Dense) -> RRF Fusion -> CrossEncoder Rerank."""
+        fetch_k = self.k * 3
+        logger.info(f"Hybrid Search: Fetching top {fetch_k} dense and sparse candidates...")
+        
+        # 1. DENSE SEARCH (ChromaDB Vector Embeddings)
+        dense_tuples = self.store.similarity_search_with_score(query, k=fetch_k)
+        
+        # 2. SPARSE SEARCH (BM25 Keyword Matching)
+        all_docs = self.store.get_all_documents()
+        if not all_docs:
+            return []
+            
+        tokenized_corpus = [doc.page_content.lower().split() for doc in all_docs]
+        bm25 = BM25Okapi(tokenized_corpus)
+        tokenized_query = query.lower().split()
+        bm25_scores = bm25.get_scores(tokenized_query)
+        
+        # Slice the strongest BM25 integer indices
+        sparse_indices = np.argsort(bm25_scores)[::-1][:fetch_k]
+        sparse_docs = [all_docs[i] for i in sparse_indices]
+        
+        # 3. RECIPROCAL RANK FUSION (RRF)
+        # Prevents either search algorithm from dominating by merging absolute ranks
+        rrf_k = 60
+        scores = {}
+        doc_map = {}
+        
+        def get_doc_id(d):
+            return getattr(d, 'id', hash(d.page_content)) if getattr(d, 'id', None) else hash(d.page_content)
+            
+        for rank, (doc, _score) in enumerate(dense_tuples):
+            d_id = get_doc_id(doc)
+            doc_map[d_id] = doc
+            scores[d_id] = scores.get(d_id, 0.0) + 1.0 / (rrf_k + rank + 1)
+            
+        for rank, doc in enumerate(sparse_docs):
+            d_id = get_doc_id(doc)
+            doc_map[d_id] = doc
+            scores[d_id] = scores.get(d_id, 0.0) + 1.0 / (rrf_k + rank + 1)
+            
+        # Siphon the fused highest-confidence candidate pool (max 20 candidates per best practice)
+        fused_pool = [doc_map[d_id] for d_id, _ in sorted(scores.items(), key=lambda x: x[1], reverse=True)[:20]]
+        
+        # 4. CROSS-ENCODER RERANKING
+        logger.info(f"Reranking top {len(fused_pool)} candidates using MS-MARCO CrossEncoder...")
+        cross_inp = [[query, doc.page_content] for doc in fused_pool]
+        rerank_scores = self.reranker.predict(cross_inp)
+        
+        # Combine documents with rerank scoring mathematically
+        results = list(zip(fused_pool, rerank_scores))
+        results.sort(key=lambda x: x[1], reverse=True)
+        
+        # Extract ultimate 'Top K' payload for Generation framework
+        final_top = results[:self.k]
+        logger.success(f"Retrieved and natively reranked top {len(final_top)} context chunks.")
+        
+        return [(doc, float(s)) for doc, s in final_top]
 
     def _format_context(self, results: list[tuple[Document, float]]) -> str:
         """Format retrieved chunks into an LLM-readable context block."""
@@ -87,7 +145,7 @@ Be specific, concise, and actionable. Format your response clearly with sections
         for i, (doc, score) in enumerate(results, 1):
             meta = doc.metadata
             parts.append(
-                f"--- Job {i} (relevance score: {1 - score:.2f}) ---\n"
+                f"--- Job {i} (relevance score: {score:.2f}) ---\n"
                 f"Title: {meta.get('title', 'N/A')}\n"
                 f"Company: {meta.get('company', 'N/A')}\n"
                 f"Location: {meta.get('location', 'N/A')}\n"
@@ -111,7 +169,7 @@ Be specific, concise, and actionable. Format your response clearly with sections
                     "location": meta.get("location", "N/A"),
                     "url":      meta.get("job_url", ""),
                     "skills":   meta.get("skills", ""),
-                    "score":    round(1 - score, 3),
+                    "score":    round(score, 3), # Logit confidence scores
                 })
         return jobs
 

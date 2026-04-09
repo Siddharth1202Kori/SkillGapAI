@@ -26,6 +26,7 @@ Usage:
 import argparse
 import json
 import sys
+import uuid
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -36,11 +37,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ── Internal imports ────────────────────────────────────────────────────────────
-from scraper.remotive_scraper import RemotiveScraper
+from scraper.registry import ScraperRegistry
 from utils.cloud_storage import CloudStorage
 from ingestion.pipeline import IngestionPipeline
 from vectordb.chroma_store import ChromaVectorStore
 from rag_engine.engine import RAGEngine
+from scraper.registry import check_freshness
 
 
 # ─── CLI ───────────────────────────────────────────────────────────────────────
@@ -74,16 +76,17 @@ def parse_args():
 # ─── Pipeline Steps ────────────────────────────────────────────────────────────
 
 def step_scrape(args) -> list[dict]:
-    """Step 1: Scrape jobs (Remotive API)."""
-    logger.info("🔍 Using Remotive API (no blocking)...")
-    scraper = RemotiveScraper()
-    listings = scraper.scrape(
+    """Step 1: Scrape jobs (Multiple Source APIs via Registry)."""
+    logger.info("🔍 Launching Scraper Registry...")
+    registry = ScraperRegistry()
+    
+    all_jobs = registry.run_all(
         query=args.query,
         location=args.location,
-        category=args.remotive_category,
+        category=args.remotive_category
     )
-
-    return [asdict(l) for l in listings]
+    
+    return [asdict(l) for l in all_jobs]
 
 
 def step_load(args) -> list[dict]:
@@ -162,20 +165,55 @@ def step_query(args, vector_store: ChromaVectorStore):
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / "output_analysis.json"
     
+    output_data = {
+        "id":              str(uuid.uuid4()),
+        "created_at":      datetime.now(timezone.utc).isoformat(),
+        "query":           result.query,
+        "matched_jobs":    result.matched_jobs,
+        "in_demand_skills": result.in_demand_skills,
+        "analysis":        result.raw_analysis,
+    }
+    
     with open(out_path, "w") as f:
-        json.dump({
-            "query":           result.query,
-            "matched_jobs":    result.matched_jobs,
-            "in_demand_skills": result.in_demand_skills,
-            "analysis":        result.raw_analysis,
-        }, f, indent=2)
-    logger.success(f"Analysis saved → {out_path}")
+        json.dump(output_data, f, indent=2)
+    logger.success(f"Analysis saved locally → {out_path}")
+    
+    # Push to Supabase for evaluator
+    try:
+        if not args.no_supabase:
+            storage = CloudStorage()
+            storage.insert_rag_output(output_data)
+    except Exception as e:
+        logger.warning(f"Failed to insert RAG output to Supabase Postgres: {e}")
 
 
 # ─── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
     args = parse_args()
+    
+    # ── Freshness Check ─────────────────────────────────────────────────────────
+    # If the user is running the standard pipeline, first check if we even need to.
+    if not args.query_only and not args.load_file and not args.load_supabase:
+        cached_data = check_freshness(args.query)
+        if cached_data:
+            # Short-circuit logic: Save cached result locally so app.py can still return it
+            out_dir = Path("rag_outputs/base_version")
+            out_dir.mkdir(parents=True, exist_ok=True)
+            out_path = out_dir / "output_analysis.json"
+            
+            with open(out_path, "w") as f:
+                json.dump(cached_data, f, indent=2)
+                
+            print("\n" + "═" * 70)
+            print("  [CACHED] SKILL GAP ANALYSIS (Instant Delivery)")
+            print("═" * 70)
+            print(cached_data.get("analysis", "No analysis block found."))
+            print("═" * 70 + "\n")
+            logger.info("Pipeline bypassed completely using Supabase cache.")
+            sys.exit(0)
+
+    # Proceed normally if stale or missing cache
     vector_store = ChromaVectorStore()
 
     # ── Data Acquisition ────────────────────────────────────────────────────────

@@ -14,8 +14,11 @@ import sys
 from typing import Optional
 
 # [DEPLOYMENT PATCH] Render's base Linux OS has sqlite3 < 3.35. This overrides it!
-__import__('pysqlite3')
-sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
+try:
+    __import__('pysqlite3')
+    sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
+except ImportError:
+    pass
 
 import chromadb
 from chromadb import PersistentClient
@@ -129,6 +132,21 @@ class ChromaVectorStore:
             search_type="similarity",
             search_kwargs={"k": k},
         )
+
+    def get_all_documents(self) -> list[Document]:
+        """Fetch all raw documents from the database (e.g. for in-memory BM25 indexing)."""
+        store = self._get_store()
+        # Underlying chromadb collection interface
+        data = store._collection.get()
+        docs = []
+        
+        # Guard against empty database checks
+        if not data or not data.get("documents"):
+            return []
+            
+        for doc_txt, metadata, idx in zip(data["documents"], data["metadatas"], data["ids"]):
+            docs.append(Document(page_content=doc_txt, metadata=metadata, id=idx))
+        return docs
 
     @property
     def count(self) -> int:

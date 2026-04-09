@@ -1,0 +1,37 @@
+services:
+  - type: web
+    name: skillgap-ai
+    runtime: python
+    region: oregon
+
+    # Step 1: Install all Python deps
+    # Step 2: Pre-download the CrossEncoder model into cache so cold starts are fast
+    buildCommand: |
+      pip install -r requirements.txt &&
+      python download_models.py
+
+    # Gunicorn with 1 worker (free tier RAM limit) and 120s timeout for long pipeline runs
+    startCommand: gunicorn app:app --workers 1 --timeout 120 --bind 0.0.0.0:$PORT
+
+    # Persistent disk so ChromaDB and rag_outputs survive restarts
+    disk:
+      name: skillgap-data
+      mountPath: /opt/render/project/src
+      sizeGB: 1
+
+    envVars:
+      - key: MISTRAL_API_KEY
+        sync: false          # Set manually in Render dashboard → Environment
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: ADZUNA_APP_ID
+        sync: false
+      - key: ADZUNA_APP_KEY
+        sync: false
+      # Tells HuggingFace where to cache models (inside the persistent disk)
+      - key: HF_HOME
+        value: /opt/render/project/src/.hf_cache
+      - key: CHROMA_PERSIST_DIR
+        value: /opt/render/project/src/chroma_db
