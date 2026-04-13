@@ -2,8 +2,6 @@
 
 *An advanced, real-time Retrieval-Augmented Generation (RAG) platform that eliminates the guesswork from job hunting by dynamically analyzing live market demands against your personal skill set.*
 
-![Screenshot](/frontend/styles.css) *(Add a screenshot here later!)*
-
 SkillGap AI is an intelligent career advisor and pipeline engine. Typical course roadmaps are static; SkillGap AI is entirely dynamic. By aggregating live job descriptions through asynchronous multi-board web scraping, processing them through a Hybrid Search vector architecture, and piping the results into Mistral's LLM, the system constructs a precise, immediately actionable learning plan specifically tailored to you.
 
 ---
